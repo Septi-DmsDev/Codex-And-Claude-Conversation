@@ -1,7 +1,7 @@
 {
   "name": "codex-and-claude-conversation",
   "version": "1.0.0",
-  "description": "Prototype sinkronisasi percakapan lokal Codex dan Claude lewat SQLite + Supabase.",
+  "description": "Local-first dashboard for syncing Codex and Claude conversations with context guardrails, starter packs, and native write-back tools.",
   "main": "src/cli.js",
   "scripts": {
     "init": "node src/cli.js init",
@@ -17,11 +17,13 @@
     "watch": "node src/cli.js watch",
     "realtime": "node src/cli.js realtime",
     "transcript": "node src/cli.js transcript",
-    "conversations": "node src/cli.js list-conversations"
+    "conversations": "node src/cli.js list-conversations",
+    "smoke": "node scripts/smoke-check.js",
+    "demo:gif": "python3 scripts/generate_demo_assets.py"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "commonjs",
   "dependencies": {
     "@supabase/supabase-js": "^2.103.3",

@@ -51,11 +51,11 @@ function buildPresetCatalog(projectRoot) {
   return [
     {
       id: "codex-backfill-local",
-      label: "Ambil riwayat Codex ke lokal",
+      label: "Codex Backfill Local",
       agent: "codex",
       category: "backfill",
-      description: "Membaca riwayat native Codex lalu menyimpannya ke database lokal tanpa mengirim ke cloud.",
-      help: "Pakai ini saat riwayat Codex di komputer lokal belum masuk ke database dashboard, tetapi Anda belum ingin sinkron ke cloud.",
+      description: "Scan history native Codex ke database lokal tanpa push cloud.",
+      help: "Pakai ini saat Anda ingin mengejar gap percakapan Codex ke .data lokal tanpa menyentuh cloud.",
       kind: "foreground",
       build() {
         return buildNodeInvocation(
@@ -70,11 +70,11 @@ function buildPresetCatalog(projectRoot) {
     },
     {
       id: "claude-backfill-local",
-      label: "Ambil riwayat Claude ke lokal",
+      label: "Claude Backfill Local",
       agent: "claude",
       category: "backfill",
-      description: "Membaca riwayat native Claude lalu menyimpannya ke database lokal tanpa mengirim ke cloud.",
-      help: "Pakai ini saat Anda ingin mengambil data Claude ke dashboard lebih dulu tanpa perubahan ke cloud.",
+      description: "Scan history native Claude ke database lokal tanpa push cloud.",
+      help: "Pakai ini saat Anda ingin menarik history Claude ke .data lokal lebih dulu tanpa sinkron cloud.",
       kind: "foreground",
       build() {
         return buildNodeInvocation(
@@ -89,11 +89,11 @@ function buildPresetCatalog(projectRoot) {
     },
     {
       id: "codex-backfill-push",
-      label: "Ambil riwayat Codex lalu kirim ke cloud",
+      label: "Codex Backfill + Push",
       agent: "codex",
       category: "backfill",
-      description: "Membaca riwayat native Codex lalu mengirim selisih barunya ke cloud.",
-      help: "Pakai ini saat ada percakapan Codex yang tertinggal dan Anda ingin menyamakan data lokal dengan cloud.",
+      description: "Scan history native Codex lalu push gap baru ke cloud.",
+      help: "Pakai ini saat Codex sempat dipakai tanpa script lalu Anda ingin mengejar selisih sampai ke Supabase.",
       kind: "foreground",
       build() {
         return buildNodeInvocation(
@@ -108,11 +108,11 @@ function buildPresetCatalog(projectRoot) {
     },
     {
       id: "claude-backfill-push",
-      label: "Ambil riwayat Claude lalu kirim ke cloud",
+      label: "Claude Backfill + Push",
       agent: "claude",
       category: "backfill",
-      description: "Membaca riwayat native Claude lalu mengirim selisih barunya ke cloud.",
-      help: "Pakai ini saat Claude memiliki riwayat baru yang belum tersinkron ke cloud.",
+      description: "Scan history native Claude lalu push gap baru ke cloud.",
+      help: "Pakai ini saat Claude punya history baru yang belum masuk ke cloud.",
       kind: "foreground",
       build() {
         return buildNodeInvocation(
@@ -127,11 +127,11 @@ function buildPresetCatalog(projectRoot) {
     },
     {
       id: "codex-sync-once",
-      label: "Sinkronkan Codex sekali",
+      label: "Codex Sync Once",
       agent: "codex",
       category: "sync",
-      description: "Menjalankan proses sinkron Codex satu putaran, lalu berhenti sendiri.",
-      help: "Cocok untuk pengecekan cepat saat Anda hanya ingin sinkron sekali tanpa mode pemantauan terus-menerus.",
+      description: "Jalankan start-codex.ps1 dalam mode sync satu kali.",
+      help: "Pakai ini untuk push dan pull satu putaran tanpa watcher terus-menerus.",
       kind: "foreground",
       build(options = {}) {
         return buildPowerShellInvocation(projectRoot, "start-codex.ps1", [
@@ -143,11 +143,11 @@ function buildPresetCatalog(projectRoot) {
     },
     {
       id: "claude-sync-once",
-      label: "Sinkronkan Claude sekali",
+      label: "Claude Sync Once",
       agent: "claude",
       category: "sync",
-      description: "Menjalankan proses sinkron Claude satu putaran, lalu berhenti sendiri.",
-      help: "Cocok untuk sinkron Claude satu kali tanpa proses tambahan di belakang layar.",
+      description: "Jalankan start-claude.ps1 dalam mode sync satu kali.",
+      help: "Pakai ini untuk sinkronisasi satu kali dari sisi Claude.",
       kind: "foreground",
       build(options = {}) {
         return buildPowerShellInvocation(projectRoot, "start-claude.ps1", [
@@ -159,11 +159,11 @@ function buildPresetCatalog(projectRoot) {
     },
     {
       id: "codex-watch",
-      label: "Pantau Codex di latar belakang",
+      label: "Codex Watch",
       agent: "codex",
       category: "watch",
-      description: "Menjalankan pemantauan Codex berkala di latar belakang.",
-      help: "Pakai ini bila Codex perlu terus dipantau agar perubahan baru cepat ikut tersinkron.",
+      description: "Menjalankan watcher Codex secara background.",
+      help: "Pakai ini jika Anda ingin Codex terus sync berkala dengan polling.",
       kind: "background",
       build(options = {}) {
         return buildPowerShellInvocation(projectRoot, "start-codex.ps1", [
@@ -175,11 +175,11 @@ function buildPresetCatalog(projectRoot) {
     },
     {
       id: "claude-watch",
-      label: "Pantau Claude di latar belakang",
+      label: "Claude Watch",
       agent: "claude",
       category: "watch",
-      description: "Menjalankan pemantauan Claude berkala di latar belakang.",
-      help: "Pakai ini bila Claude perlu terus dipantau agar perubahan baru cepat ikut tersinkron.",
+      description: "Menjalankan watcher Claude secara background.",
+      help: "Pakai ini jika Claude perlu polling sync terus-menerus di background.",
       kind: "background",
       build(options = {}) {
         return buildPowerShellInvocation(projectRoot, "start-claude.ps1", [
@@ -191,11 +191,11 @@ function buildPresetCatalog(projectRoot) {
     },
     {
       id: "codex-realtime",
-      label: "Dengarkan Codex realtime",
+      label: "Codex Realtime",
       agent: "codex",
       category: "realtime",
-      description: "Membuka pendengar realtime Codex di latar belakang untuk menerima pembaruan lebih cepat.",
-      help: "Cocok bila Anda ingin Codex segera menerima perubahan dari cloud tanpa menunggu jadwal polling.",
+      description: "Menjalankan listener realtime Codex secara background.",
+      help: "Pakai ini untuk mendengar update cloud tanpa polling dari sisi Codex.",
       kind: "background",
       build(options = {}) {
         return buildPowerShellInvocation(projectRoot, "start-codex.ps1", [
@@ -207,11 +207,11 @@ function buildPresetCatalog(projectRoot) {
     },
     {
       id: "claude-realtime",
-      label: "Dengarkan Claude realtime",
+      label: "Claude Realtime",
       agent: "claude",
       category: "realtime",
-      description: "Membuka pendengar realtime Claude di latar belakang untuk menerima pembaruan lebih cepat.",
-      help: "Cocok bila Anda ingin Claude segera menerima perubahan dari cloud tanpa menunggu jadwal polling.",
+      description: "Menjalankan listener realtime Claude secara background.",
+      help: "Pakai ini untuk mendengar update cloud tanpa polling dari sisi Claude.",
       kind: "background",
       build(options = {}) {
         return buildPowerShellInvocation(projectRoot, "start-claude.ps1", [
@@ -223,11 +223,11 @@ function buildPresetCatalog(projectRoot) {
     },
     {
       id: "codex-pull-native",
-      label: "Tarik cloud lalu tulis ke native Codex",
+      label: "Codex Pull Native",
       agent: "codex",
       category: "native",
-      description: "Mengambil data terbaru dari cloud ke lokal lalu menuliskannya kembali ke penyimpanan native Codex.",
-      help: "Pakai ini saat komputer lain perlu menerima salinan percakapan ke folder native Codex.",
+      description: "Tarik cloud ke database lokal lalu tulis mirror ke native Codex.",
+      help: "Pakai ini di PC lain saat Anda ingin percakapan dari cloud ditulis balik ke storage native Codex.",
       kind: "foreground",
       build(options = {}) {
         const args = [
@@ -244,11 +244,11 @@ function buildPresetCatalog(projectRoot) {
     },
     {
       id: "claude-pull-native",
-      label: "Tarik cloud lalu tulis ke native Claude",
+      label: "Claude Pull Native",
       agent: "claude",
       category: "native",
-      description: "Mengambil data terbaru dari cloud ke lokal lalu menuliskannya kembali ke penyimpanan native Claude.",
-      help: "Pakai ini saat project Claude di komputer lokal perlu diisi ulang dari data cloud.",
+      description: "Tarik cloud ke database lokal lalu tulis mirror ke native Claude.",
+      help: "Pakai ini saat Anda ingin project Claude native menerima hasil mirror dari cloud.",
       kind: "foreground",
       build(options = {}) {
         const args = [
@@ -311,7 +311,7 @@ class DashboardCommandCenter {
     const preset = this.presets.find((item) => item.id === presetId);
 
     if (!preset) {
-      throw new Error(`Starter pack atau perintah tidak dikenal: ${presetId}`);
+      throw new Error(`Preset command tidak dikenal: ${presetId}`);
     }
 
     const invocation = preset.build(options);

@@ -1,176 +1,226 @@
+# 🧠 Context Bridge
+
+![Node.js](https://img.shields.io/badge/node-%3E%3D18-0f766e)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Local First](https://img.shields.io/badge/local--first-yes-111827)
+![AI Context Guard](https://img.shields.io/badge/AI-context%20guard-f59e0b)
+![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
+
+> A local-first dashboard for syncing Codex and Claude conversations with project-scoped AI context guardrails, starter packs, native write-back tools, and a dark-mode control center.
+
+![Context Bridge social preview](./docs/social-preview.png)
+
+## Why this project exists
+
+Most AI chat tooling is great at generating answers, but weak at respecting boundaries between projects.
+
+Without a guardrail, stored conversations can easily become:
+
+- mixed across unrelated projects
+- difficult to sync consistently
+- risky to reuse as AI context
+- hard to explain to non-technical teammates
+
+**Context Bridge** solves that with a simple principle:
+
+> AI should only read the conversations that belong to the current project and are explicitly allowed.
+
+## Highlights
+
+- **Context Guard** to keep AI focused on approved project conversations only
+- **Codex + Claude sync workflows** with backfill, push, pull, and write-back flows
+- **Starter packs** so non-technical users can run common workflows in one click
+- **Dark mode dashboard** for long work sessions
+- **Local-first SQLite storage** with cloud sync support
+- **GitHub Actions CI** for smoke checks and asset generation
+- **Open-source ready assets** including logo, social preview, and demo GIF
+
+## Preview
+
+### Dashboard
+![Dashboard screenshot](./docs/screenshot-dashboard.png)
+
+### Command center
+![Command center screenshot](./docs/screenshot-command-center.png)
+
+### Demo GIF
+![Demo GIF](./docs/demo.gif)
+
+## Features
+
+### 1. Context Guard
+
+Every conversation can be assigned:
+
+- `project_id`
+- `scope`
+- `allowed_for_ai`
+
+This lets you separate:
+
+- project conversations
+- general conversations
+- private conversations
+- archived conversations
+
+The dashboard can then operate in safer modes such as:
+
+- **Active Project + AI Allowed**
+- **Active Project Only**
+- **AI Allowed Only**
+- **General Only**
+
+### 2. Starter Packs
+
+Common workflows can be launched from the dashboard without memorizing command-line flags.
+
+Examples:
+
+- Codex backfill to local storage
+- Claude backfill plus cloud push
+- one-time sync runs
+- background watchers
+- realtime listeners
+- native write-back operations
+
+### 3. Native write-back
+
+Mirror approved conversations back into native Codex or Claude locations.
+
+This is useful when you want a project thread to be reconstructed on another machine or restored into a local native environment.
+
+### 4. Dark mode dashboard
+
+The dashboard now includes a built-in light/dark theme toggle, stored in browser local storage.
+
+## Project structure
+
+```text
 .
+├── src/
+│   ├── cli.js
+│   ├── config.js
+│   ├── dashboard-command-center.js
+│   ├── dashboard-server.js
+│   ├── history-import.js
+│   ├── local-store.js
+│   ├── native-writeback.js
+│   ├── realtime.js
+│   └── supabase-sync.js
+├── docs/
+│   ├── demo.gif
+│   ├── logo.svg
+│   ├── screenshot-command-center.png
+│   ├── screenshot-dashboard.png
+│   └── social-preview.png
+├── scripts/
+│   ├── generate_demo_assets.py
+│   └── smoke-check.js
+└── .github/
+    └── workflows/
+        └── ci.yml
+```
 
-🧠 Codex & Claude Conversation Sync Dashboard
+## Getting started
 
+### Requirements
 
+- Node.js 18+
+- npm
+- Python 3 (only needed for generating demo assets)
+- Windows PowerShell for the included `*.ps1` helpers
 
+### Install dependencies
 
-
-
-
-
-
-
-A local dashboard to manage, store, and synchronize conversations from Codex and Claude — with full control over what AI is allowed to read using a built-in Context Guard system.
-
-📸 Preview
-Dashboard UI
-
-Command Center
-
-🎬 Demo
-
-💡 Tip: Replace the images above with real screenshots/GIFs from your project
-Suggested folder:
-
-docs/
-├── screenshot-dashboard.png
-├── screenshot-command-center.png
-└── demo.gif
-🚀 Features
-🔄 Conversation Sync
-Sync conversations from Codex & Claude
-Backfill historical data
-One-way & two-way sync support
-🖥️ Visual Dashboard
-Clean and user-friendly interface
-Filter by source (Codex / Claude)
-Search by title or conversation ID
-Sync status & metadata visibility
-🧠 Context Guard (🔥 Core Feature)
-
-Prevent AI from reading irrelevant or sensitive conversations.
-
-Restrict AI to specific projects
-Whitelist which conversations AI can access
-Separate project, general, and private data
-⚡ Starter Packs (One-Click Automation)
-
-Run multiple actions at once:
-
-Beginner Codex setup
-Beginner Claude setup
-Two-way sync
-Realtime monitoring
-Native recovery mode
-🏷️ Project-Based Organization
-Assign project_id to conversations
-Define scope:
-project
-general
-private
-Control AI access per conversation
-🛡️ Why Context Guard Matters
-
-Without proper filtering, AI systems may read all stored conversations.
-
-This project ensures:
-
-❌ No uncontrolled context access
-✅ Only relevant conversations are used
-🔒 Sensitive data stays protected
-🧱 Project Structure
-src/
-├── dashboard-server.js         # Main dashboard server
-├── dashboard-command-center.js # Actions & starter packs
-├── local-store.js              # Local database (SQLite)
-├── supabase-sync.js            # Cloud sync
-├── realtime.js                 # Realtime listener
-├── history-import.js           # Import history
-├── native-writeback.js         # Write back to native apps
-├── cli.js                      # CLI interface
-⚙️ Getting Started
-1. Install dependencies
+```bash
 npm install
-2. Run dashboard
-node src/dashboard-server.js
+```
 
-Open in browser:
+### Run the dashboard
 
-http://localhost:3000
-🧭 Quick Start (Beginner Friendly)
-1. Set Active Project
+```bash
+node src/cli.js dashboard --port 3030
+```
 
-Example:
+Or on Windows:
 
-sync-codex-claude
-2. Use Safe Mode
-Active Project + AI Allowed
-3. Select Conversations
+```powershell
+.\start-dashboard.ps1
+```
 
-Choose only relevant ones.
+Then open:
 
-4. Enable AI Access
+```text
+http://localhost:3030
+```
 
-From Context Guard Panel:
+## Quick start flow
 
-Set project_id
-Set scope = project
-Enable ✅ "Allow AI access"
-🧪 Operation Modes
-Mode	Description
-Active Project + AI	✅ Safest
-Active Project Only	All project conversations
-AI Allowed Only	Whitelisted only
-General	Non-project data
-All Conversations	⚠️ Not recommended
-🧰 Starter Packs
-🔰 Codex Beginner
+1. Set the **Active Project** in the dashboard.
+2. Choose **Active Project + AI Allowed** mode.
+3. Select the conversations that belong to that project.
+4. Mark only the relevant conversations as **allowed for AI**.
+5. Run starter packs or write-back flows as needed.
 
-Backfill → Store locally → Push to cloud
+## Demo asset generation
 
-🔰 Claude Beginner
+This repo includes a script to regenerate the demo GIF and social preview image.
 
-Fetch → Store → Sync
+```bash
+npm run demo:gif
+```
 
-🔁 Two-Way Sync
+The script updates:
 
-Local ↔ Cloud
+- `docs/demo.gif`
+- `docs/social-preview.png`
 
-👀 Realtime Mode
+If `docs/screenshot-dashboard.png` and `docs/screenshot-command-center.png` already exist, the GIF will use them. Otherwise it will create clean placeholders automatically.
 
-Continuous sync
+## CI / automation
 
-♻️ Native Recovery
+GitHub Actions runs a lightweight CI pipeline on every push and pull request:
 
-Restore to original apps
+- installs dependencies
+- runs JavaScript smoke checks
+- regenerates demo assets
+- uploads generated docs assets as a workflow artifact
 
-🗄️ Database
+See:
 
-Uses SQLite (local)
+```text
+.github/workflows/ci.yml
+```
 
-Key fields:
+## Troubleshooting
 
-project_id
-scope
-allowed_for_ai
-⚠️ Important Notes
-Default behavior is safe (restricted AI access)
-Always use project_id
-Avoid using “All Conversations” mode
-Use whitelist for sensitive workflows
-🧩 Roadmap
- Beginner onboarding wizard
- Auto project tagging (AI-based)
- Drag & drop context manager
- Multi-project workspace
- Role-based access control
-🤝 Contributing
+### `no such column: project_id`
 
-Pull requests are welcome 🙌
+Your SQLite database was created with an older schema.
 
-Focus areas:
+Use the updated `src/local-store.js` with auto-migration enabled, then restart the dashboard.
 
-Dashboard UX improvements
-AI context safety
-Sync performance
-⭐ Support
+If you are in a disposable dev environment, you can also remove the old database and let the app recreate it.
 
-If you find this useful:
+## Roadmap
 
-⭐ Star this repo
-🛠️ Contribute improvements
-🧠 Share ideas
-📄 License
+- onboarding wizard for non-technical users
+- project templates and safer defaults
+- multi-project workspaces
+- richer access-control flows
+- polished release packaging
 
-MIT License
+## Contributing
+
+Issues and pull requests are welcome.
+
+Good areas to contribute:
+
+- dashboard UX
+- sync reliability
+- safer context isolation
+- better docs and examples
+
+## License
+
+This project is licensed under the MIT License.

@@ -200,6 +200,9 @@ function writeCodexMirror(store, options = {}) {
   const codexHome = options.codexHome || path.join(os.homedir(), ".codex");
   const conversations = store.getConversationsForExport({
     conversationId: options.conversationId,
+    projectId: options.projectId || "",
+    scopeMode: options.scopeMode || "",
+    onlyAllowedForAi: options.onlyAllowedForAi !== false,
   });
 
   let exported = 0;
@@ -356,6 +359,9 @@ function writeClaudeMirror(store, options = {}) {
   const projectDir = path.join(claudeHome, "projects", projectName);
   const conversations = store.getConversationsForExport({
     conversationId: options.conversationId,
+    projectId: options.projectId || "",
+    scopeMode: options.scopeMode || "",
+    onlyAllowedForAi: options.onlyAllowedForAi !== false,
   });
 
   let exported = 0;

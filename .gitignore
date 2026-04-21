@@ -6,3 +6,11 @@
 *.db-shm
 *.db-wal
 
+@"
+node_modules/
+data.db
+.env
+*.log
+dist/
+coverage/
+"@ | Out-File -Encoding utf8 .gitignore

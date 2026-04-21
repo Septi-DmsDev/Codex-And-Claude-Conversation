@@ -21,6 +21,63 @@ function fromJson(value) {
   }
 }
 
+function normalizeScope(scope, projectId = "") {
+  const normalized = String(scope || "").trim().toLowerCase();
+
+  if (["project", "general", "private", "archive"].includes(normalized)) {
+    return normalized;
+  }
+
+  return projectId ? "project" : "general";
+}
+
+function normalizeAllowedForAi(value) {
+  if (typeof value === "boolean") {
+    return value ? 1 : 0;
+  }
+
+  if (typeof value === "number") {
+    return value ? 1 : 0;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return ["1", "true", "yes", "ya", "on"].includes(normalized) ? 1 : 0;
+  }
+
+  return 0;
+}
+
+function mergeConversationMetadata(metadata = {}, context = {}) {
+  const projectId = String(
+    context.projectId || metadata.projectId || metadata.project_id || "",
+  ).trim();
+
+  const scope = normalizeScope(context.scope || metadata.scope, projectId);
+
+  const allowedForAi = Object.prototype.hasOwnProperty.call(context, "allowedForAi")
+    ? normalizeAllowedForAi(context.allowedForAi)
+    : normalizeAllowedForAi(metadata.allowedForAi ?? metadata.allowed_for_ai ?? 0);
+
+  return {
+    ...metadata,
+    projectId,
+    scope,
+    allowedForAi: Boolean(allowedForAi),
+  };
+}
+
+function extractConversationContext(metadata = {}, overrides = {}) {
+  const mergedMetadata = mergeConversationMetadata(metadata, overrides);
+
+  return {
+    metadata: mergedMetadata,
+    projectId: mergedMetadata.projectId,
+    scope: mergedMetadata.scope,
+    allowedForAi: normalizeAllowedForAi(mergedMetadata.allowedForAi),
+  };
+}
+
 function hasColumn(db, tableName, columnName) {
   const rows = db.prepare(`PRAGMA table_info(${tableName})`).all();
   return rows.some((row) => row.name === columnName);
@@ -40,6 +97,9 @@ class LocalStore {
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
         metadata TEXT NOT NULL DEFAULT '{}',
+        project_id TEXT NOT NULL DEFAULT '',
+        scope TEXT NOT NULL DEFAULT 'general',
+        allowed_for_ai INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         sync_status TEXT NOT NULL DEFAULT '${SYNC_PENDING}',
@@ -64,12 +124,14 @@ class LocalStore {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
-
-      CREATE INDEX IF NOT EXISTS idx_conversations_sync_status ON conversations(sync_status, updated_at);
-      CREATE INDEX IF NOT EXISTS idx_messages_sync_status ON messages(sync_status, updated_at);
-      CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at);
     `);
 
+    this.ensureConversationColumns();
+    this.ensureIndexes();
+    this.backfillConversationContext();
+  }
+
+  ensureConversationColumns() {
     if (!hasColumn(this.db, "conversations", "deleted_at")) {
       this.db.exec("ALTER TABLE conversations ADD COLUMN deleted_at TEXT");
     }
@@ -78,10 +140,60 @@ class LocalStore {
       this.db.exec("ALTER TABLE messages ADD COLUMN deleted_at TEXT");
     }
 
+    if (!hasColumn(this.db, "conversations", "project_id")) {
+      this.db.exec("ALTER TABLE conversations ADD COLUMN project_id TEXT NOT NULL DEFAULT ''");
+    }
+
+    if (!hasColumn(this.db, "conversations", "scope")) {
+      this.db.exec("ALTER TABLE conversations ADD COLUMN scope TEXT NOT NULL DEFAULT 'general'");
+    }
+
+    if (!hasColumn(this.db, "conversations", "allowed_for_ai")) {
+      this.db.exec("ALTER TABLE conversations ADD COLUMN allowed_for_ai INTEGER NOT NULL DEFAULT 0");
+    }
+  }
+
+  ensureIndexes() {
     this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_conversations_sync_status ON conversations(sync_status, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_messages_sync_status ON messages(sync_status, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_conversations_deleted_at ON conversations(deleted_at, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_conversations_project_scope ON conversations(project_id, scope, allowed_for_ai, updated_at);
       CREATE INDEX IF NOT EXISTS idx_messages_deleted_at ON messages(deleted_at, updated_at);
     `);
+  }
+
+  backfillConversationContext() {
+    const rows = this.db
+      .prepare("SELECT id, metadata, project_id, scope, allowed_for_ai FROM conversations")
+      .all();
+
+    const update = this.db.prepare(`
+      UPDATE conversations
+      SET metadata = ?, project_id = ?, scope = ?, allowed_for_ai = ?
+      WHERE id = ?
+    `);
+
+    const run = this.db.transaction((items) => {
+      for (const row of items) {
+        const context = extractConversationContext(fromJson(row.metadata), {
+          projectId: row.project_id,
+          scope: row.scope,
+          allowedForAi: row.allowed_for_ai,
+        });
+
+        update.run(
+          toJson(context.metadata),
+          context.projectId,
+          context.scope,
+          context.allowedForAi,
+          row.id,
+        );
+      }
+    });
+
+    run(rows);
   }
 
   hasConversation(id) {
@@ -94,34 +206,72 @@ class LocalStore {
     return Boolean(row);
   }
 
-  createConversation({ id, title, metadata = {}, createdAt, updatedAt, syncStatus = SYNC_PENDING }) {
+  createConversation({
+    id,
+    title,
+    metadata = {},
+    projectId = "",
+    scope = "",
+    allowedForAi = 0,
+    createdAt,
+    updatedAt,
+    syncStatus = SYNC_PENDING,
+  }) {
+    const context = extractConversationContext(metadata, {
+      projectId,
+      scope,
+      allowedForAi,
+    });
+
     this.db
-      .prepare(
-        `
-          INSERT INTO conversations (id, title, metadata, created_at, updated_at, sync_status, deleted_at)
-          VALUES (?, ?, ?, ?, ?, ?, NULL)
-          ON CONFLICT(id) DO UPDATE SET
-            title = excluded.title,
-            metadata = excluded.metadata,
-            updated_at = excluded.updated_at,
-            sync_status = excluded.sync_status,
-            deleted_at = NULL
-        `,
-      )
-      .run(id, title, toJson(metadata), createdAt, updatedAt, syncStatus);
+      .prepare(`
+        INSERT INTO conversations (
+          id, title, metadata, project_id, scope, allowed_for_ai, created_at, updated_at, sync_status, deleted_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+        ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title,
+          metadata = excluded.metadata,
+          project_id = excluded.project_id,
+          scope = excluded.scope,
+          allowed_for_ai = excluded.allowed_for_ai,
+          updated_at = excluded.updated_at,
+          sync_status = excluded.sync_status,
+          deleted_at = NULL
+      `)
+      .run(
+        id,
+        title,
+        toJson(context.metadata),
+        context.projectId,
+        context.scope,
+        context.allowedForAi,
+        createdAt,
+        updatedAt,
+        syncStatus,
+      );
   }
 
   upsertImportedConversation({ id, title, metadata = {}, createdAt, updatedAt }) {
+    const context = extractConversationContext(metadata);
+
     const existing = this.db
-      .prepare("SELECT title, metadata, created_at, updated_at FROM conversations WHERE id = ?")
+      .prepare(`
+        SELECT title, metadata, project_id, scope, allowed_for_ai, created_at, updated_at
+        FROM conversations
+        WHERE id = ?
+      `)
       .get(id);
 
-    const metadataJson = toJson(metadata);
+    const metadataJson = toJson(context.metadata);
 
     if (
       existing &&
       existing.title === title &&
       existing.metadata === metadataJson &&
+      existing.project_id === context.projectId &&
+      existing.scope === context.scope &&
+      Number(existing.allowed_for_ai || 0) === context.allowedForAi &&
       existing.created_at === createdAt &&
       existing.updated_at === updatedAt
     ) {
@@ -131,7 +281,10 @@ class LocalStore {
     this.createConversation({
       id,
       title,
-      metadata,
+      metadata: context.metadata,
+      projectId: context.projectId,
+      scope: context.scope,
+      allowedForAi: context.allowedForAi,
       createdAt,
       updatedAt,
       syncStatus: SYNC_PENDING,
@@ -153,32 +306,28 @@ class LocalStore {
   }) {
     const insert = this.db.transaction(() => {
       this.db
-        .prepare(
-          `
-            INSERT INTO messages (
-              id, conversation_id, source, role, content, metadata, created_at, updated_at, sync_status, deleted_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-            ON CONFLICT(id) DO UPDATE SET
-              source = excluded.source,
-              role = excluded.role,
-              content = excluded.content,
-              metadata = excluded.metadata,
-              updated_at = excluded.updated_at,
-              sync_status = excluded.sync_status,
-              deleted_at = NULL
-          `,
-        )
+        .prepare(`
+          INSERT INTO messages (
+            id, conversation_id, source, role, content, metadata, created_at, updated_at, sync_status, deleted_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+          ON CONFLICT(id) DO UPDATE SET
+            source = excluded.source,
+            role = excluded.role,
+            content = excluded.content,
+            metadata = excluded.metadata,
+            updated_at = excluded.updated_at,
+            sync_status = excluded.sync_status,
+            deleted_at = NULL
+        `)
         .run(id, conversationId, source, role, content, toJson(metadata), createdAt, updatedAt, syncStatus);
 
       this.db
-        .prepare(
-          `
-            UPDATE conversations
-            SET updated_at = ?, sync_status = ?
-            WHERE id = ?
-          `,
-        )
+        .prepare(`
+          UPDATE conversations
+          SET updated_at = ?, sync_status = ?
+          WHERE id = ?
+        `)
         .run(updatedAt, syncStatus, conversationId);
     });
 
@@ -200,15 +349,13 @@ class LocalStore {
 
   getPendingConversations(limit = 500) {
     return this.db
-      .prepare(
-        `
-          SELECT id, title, metadata, created_at, updated_at, deleted_at
-          FROM conversations
-          WHERE sync_status = ?
-          ORDER BY updated_at ASC
-          LIMIT ?
-        `,
-      )
+      .prepare(`
+        SELECT id, title, metadata, created_at, updated_at, deleted_at
+        FROM conversations
+        WHERE sync_status = ?
+        ORDER BY updated_at ASC
+        LIMIT ?
+      `)
       .all(SYNC_PENDING, limit)
       .map((row) => ({
         ...row,
@@ -218,15 +365,13 @@ class LocalStore {
 
   getPendingMessages(limit = 1000) {
     return this.db
-      .prepare(
-        `
-          SELECT id, conversation_id, source, role, content, metadata, created_at, updated_at, deleted_at
-          FROM messages
-          WHERE sync_status = ?
-          ORDER BY updated_at ASC
-          LIMIT ?
-        `,
-      )
+      .prepare(`
+        SELECT id, conversation_id, source, role, content, metadata, created_at, updated_at, deleted_at
+        FROM messages
+        WHERE sync_status = ?
+        ORDER BY updated_at ASC
+        LIMIT ?
+      `)
       .all(SYNC_PENDING, limit)
       .map((row) => ({
         ...row,
@@ -242,6 +387,7 @@ class LocalStore {
     const stmt = this.db.prepare(
       "UPDATE conversations SET sync_status = ?, last_synced_at = ? WHERE id = ?",
     );
+
     const run = this.db.transaction((items) => {
       for (const id of items) {
         stmt.run(SYNC_SYNCED, syncedAt, id);
@@ -256,7 +402,10 @@ class LocalStore {
       return;
     }
 
-    const stmt = this.db.prepare("UPDATE messages SET sync_status = ?, last_synced_at = ? WHERE id = ?");
+    const stmt = this.db.prepare(
+      "UPDATE messages SET sync_status = ?, last_synced_at = ? WHERE id = ?",
+    );
+
     const run = this.db.transaction((items) => {
       for (const id of items) {
         stmt.run(SYNC_SYNCED, syncedAt, id);
@@ -281,44 +430,64 @@ class LocalStore {
 
   setState(key, value) {
     this.db
-      .prepare(
-        `
-          INSERT INTO sync_state(key, value)
-          VALUES (?, ?)
-          ON CONFLICT(key) DO UPDATE SET value = excluded.value
-        `,
-      )
+      .prepare(`
+        INSERT INTO sync_state(key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `)
       .run(key, value);
   }
 
   upsertConversationFromRemote(row) {
     const local = this.db
-      .prepare("SELECT updated_at, sync_status FROM conversations WHERE id = ?")
+      .prepare(`
+        SELECT updated_at, sync_status, metadata, project_id, scope, allowed_for_ai
+        FROM conversations
+        WHERE id = ?
+      `)
       .get(row.id);
 
     if (local && local.sync_status === SYNC_PENDING && local.updated_at > row.updated_at) {
       return false;
     }
 
+    const inferredProjectId = String(
+      row.project_id || row.metadata?.projectId || row.metadata?.project_id || "",
+    ).trim();
+
     this.db
-      .prepare(
-        `
-          INSERT INTO conversations (id, title, metadata, created_at, updated_at, sync_status, last_synced_at, deleted_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET
-            title = excluded.title,
-            metadata = excluded.metadata,
-            created_at = excluded.created_at,
-            updated_at = excluded.updated_at,
-            sync_status = excluded.sync_status,
-            last_synced_at = excluded.last_synced_at,
-            deleted_at = excluded.deleted_at
-        `,
-      )
+      .prepare(`
+        INSERT INTO conversations (
+          id, title, metadata, project_id, scope, allowed_for_ai, created_at, updated_at, sync_status, last_synced_at, deleted_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title,
+          metadata = excluded.metadata,
+          project_id = excluded.project_id,
+          scope = excluded.scope,
+          allowed_for_ai = excluded.allowed_for_ai,
+          created_at = excluded.created_at,
+          updated_at = excluded.updated_at,
+          sync_status = excluded.sync_status,
+          last_synced_at = excluded.last_synced_at,
+          deleted_at = excluded.deleted_at
+      `)
       .run(
         row.id,
         row.title,
-        toJson(row.metadata),
+        toJson(
+          mergeConversationMetadata(row.metadata, {
+            projectId: row.project_id,
+            scope: row.scope,
+            allowedForAi: row.allowed_for_ai,
+          }),
+        ),
+        inferredProjectId,
+        normalizeScope(row.scope || row.metadata?.scope, inferredProjectId),
+        normalizeAllowedForAi(
+          row.allowed_for_ai ?? row.metadata?.allowedForAi ?? row.metadata?.allowed_for_ai ?? 0,
+        ),
         row.created_at,
         row.updated_at,
         SYNC_SYNCED,
@@ -330,32 +499,32 @@ class LocalStore {
   }
 
   upsertMessageFromRemote(row) {
-    const local = this.db.prepare("SELECT updated_at, sync_status FROM messages WHERE id = ?").get(row.id);
+    const local = this.db
+      .prepare("SELECT updated_at, sync_status FROM messages WHERE id = ?")
+      .get(row.id);
 
     if (local && local.sync_status === SYNC_PENDING && local.updated_at > row.updated_at) {
       return false;
     }
 
     this.db
-      .prepare(
-        `
-          INSERT INTO messages (
-            id, conversation_id, source, role, content, metadata, created_at, updated_at, sync_status, last_synced_at, deleted_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET
-            conversation_id = excluded.conversation_id,
-            source = excluded.source,
-            role = excluded.role,
-            content = excluded.content,
-            metadata = excluded.metadata,
-            created_at = excluded.created_at,
-            updated_at = excluded.updated_at,
-            sync_status = excluded.sync_status,
-            last_synced_at = excluded.last_synced_at,
-            deleted_at = excluded.deleted_at
-        `,
-      )
+      .prepare(`
+        INSERT INTO messages (
+          id, conversation_id, source, role, content, metadata, created_at, updated_at, sync_status, last_synced_at, deleted_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          conversation_id = excluded.conversation_id,
+          source = excluded.source,
+          role = excluded.role,
+          content = excluded.content,
+          metadata = excluded.metadata,
+          created_at = excluded.created_at,
+          updated_at = excluded.updated_at,
+          sync_status = excluded.sync_status,
+          last_synced_at = excluded.last_synced_at,
+          deleted_at = excluded.deleted_at
+      `)
       .run(
         row.id,
         row.conversation_id,
@@ -375,30 +544,77 @@ class LocalStore {
 
   listConversations({ includeDeleted = true } = {}) {
     const whereClause = includeDeleted ? "" : "WHERE c.deleted_at IS NULL";
+
     return this.db
-      .prepare(
-        `
-          SELECT
-            c.id,
-            c.title,
-            c.created_at,
-            c.updated_at,
-            c.sync_status,
-            c.deleted_at,
-            COUNT(m.id) AS message_count
-          FROM conversations c
-          LEFT JOIN messages m ON m.conversation_id = c.id AND m.deleted_at IS NULL
-          ${whereClause}
-          GROUP BY c.id
-          ORDER BY c.updated_at DESC
-        `,
-      )
+      .prepare(`
+        SELECT
+          c.id,
+          c.title,
+          c.created_at,
+          c.updated_at,
+          c.sync_status,
+          c.deleted_at,
+          COUNT(m.id) AS message_count
+        FROM conversations c
+        LEFT JOIN messages m ON m.conversation_id = c.id AND m.deleted_at IS NULL
+        ${whereClause}
+        GROUP BY c.id
+        ORDER BY c.updated_at DESC
+      `)
       .all();
   }
 
-  listConversationsForDashboard({ query = "", source = "", includeDeleted = false, limit = 200 } = {}) {
+  buildConversationScopeWhere({ projectId = "", scopeMode = "project-ai", onlyAllowedForAi = false } = {}) {
     const where = [];
     const params = [];
+    const normalizedProjectId = String(projectId || "").trim();
+    const normalizedScopeMode = String(scopeMode || "project-ai").trim().toLowerCase();
+
+    if (onlyAllowedForAi) {
+      where.push("c.allowed_for_ai = 1");
+    }
+
+    if (normalizedScopeMode === "project-ai") {
+      if (!normalizedProjectId) {
+        where.push("1 = 0");
+      } else {
+        where.push("c.project_id = ?");
+        params.push(normalizedProjectId);
+      }
+      where.push("c.allowed_for_ai = 1");
+    } else if (normalizedScopeMode === "project") {
+      if (!normalizedProjectId) {
+        where.push("1 = 0");
+      } else {
+        where.push("c.project_id = ?");
+        params.push(normalizedProjectId);
+      }
+    } else if (normalizedScopeMode === "allowed") {
+      where.push("c.allowed_for_ai = 1");
+    } else if (normalizedScopeMode === "general") {
+      where.push("c.scope = 'general'");
+    }
+
+    return { where, params };
+  }
+
+  listConversationsForDashboard({
+    query = "",
+    source = "",
+    includeDeleted = false,
+    limit = 200,
+    projectId = "",
+    scopeMode = "project-ai",
+    onlyAllowedForAi = false,
+  } = {}) {
+    const scoped = this.buildConversationScopeWhere({
+      projectId,
+      scopeMode: scopeMode || (projectId ? "project-ai" : "allowed"),
+      onlyAllowedForAi,
+    });
+
+    const where = [...scoped.where];
+    const params = [...scoped.params];
 
     if (query) {
       where.push("(c.id LIKE ? OR c.title LIKE ?)");
@@ -419,106 +635,178 @@ class LocalStore {
     const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
     return this.db
-      .prepare(
-        `
-          SELECT
-            c.id,
-            c.title,
-            c.created_at,
-            c.updated_at,
-            c.sync_status,
-            c.last_synced_at,
-            c.deleted_at,
-            COUNT(m.id) AS message_count,
-            MIN(m.created_at) AS first_message_at,
-            MAX(m.created_at) AS last_message_at,
-            GROUP_CONCAT(DISTINCT m.source) AS sources
-          FROM conversations c
-          LEFT JOIN messages m ON m.conversation_id = c.id AND m.deleted_at IS NULL
-          ${whereClause}
-          GROUP BY c.id
-          ORDER BY c.updated_at DESC
-          LIMIT ?
-        `,
-      )
+      .prepare(`
+        SELECT
+          c.id,
+          c.title,
+          c.created_at,
+          c.updated_at,
+          c.sync_status,
+          c.last_synced_at,
+          c.deleted_at,
+          c.project_id,
+          c.scope,
+          c.allowed_for_ai,
+          COUNT(m.id) AS message_count,
+          MIN(m.created_at) AS first_message_at,
+          MAX(m.created_at) AS last_message_at,
+          GROUP_CONCAT(DISTINCT m.source) AS sources
+        FROM conversations c
+        LEFT JOIN messages m ON m.conversation_id = c.id AND m.deleted_at IS NULL
+        ${whereClause}
+        GROUP BY c.id
+        ORDER BY c.updated_at DESC
+        LIMIT ?
+      `)
       .all(...params, limit)
       .map((row) => ({
         ...row,
+        project_id: row.project_id || "",
+        scope: normalizeScope(row.scope, row.project_id || ""),
+        allowed_for_ai: Number(row.allowed_for_ai || 0),
         sources: row.sources ? row.sources.split(",").filter(Boolean) : [],
       }));
   }
 
   getConversation(conversationId, { includeDeleted = true } = {}) {
     const row = this.db
-      .prepare(
-        `
-          SELECT id, title, metadata, created_at, updated_at, sync_status, last_synced_at, deleted_at
-          FROM conversations
-          WHERE id = ?
-            ${includeDeleted ? "" : "AND deleted_at IS NULL"}
-        `,
-      )
+      .prepare(`
+        SELECT id, title, metadata, project_id, scope, allowed_for_ai, created_at, updated_at, sync_status, last_synced_at, deleted_at
+        FROM conversations
+        WHERE id = ?
+        ${includeDeleted ? "" : "AND deleted_at IS NULL"}
+      `)
       .get(conversationId);
 
     if (!row) {
       return null;
     }
 
+    const metadata = fromJson(row.metadata);
+
+    const context = extractConversationContext(metadata, {
+      projectId: row.project_id,
+      scope: row.scope,
+      allowedForAi: row.allowed_for_ai,
+    });
+
     return {
       ...row,
-      metadata: fromJson(row.metadata),
+      metadata: context.metadata,
+      project_id: context.projectId,
+      scope: context.scope,
+      allowed_for_ai: context.allowedForAi,
     };
   }
 
-  getConversationsForExport({ conversationId } = {}) {
+  getConversationsForExport({
+    conversationId,
+    projectId = "",
+    scopeMode = "",
+    onlyAllowedForAi = true,
+  } = {}) {
     if (conversationId) {
       const conversation = this.getConversation(conversationId);
       return conversation && !conversation.deleted_at ? [conversation] : [];
     }
 
+    const scoped = this.buildConversationScopeWhere({
+      projectId,
+      scopeMode,
+      onlyAllowedForAi,
+    });
+
+    const where = ["c.deleted_at IS NULL", ...scoped.where];
+    const params = [...scoped.params];
+    const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
     return this.db
-      .prepare(
-        `
-          SELECT id, title, metadata, created_at, updated_at, sync_status, last_synced_at
-          FROM conversations
-          WHERE deleted_at IS NULL
-          ORDER BY updated_at DESC
-        `,
-      )
-      .all()
-      .map((row) => ({
-        ...row,
-        metadata: fromJson(row.metadata),
-      }));
+      .prepare(`
+        SELECT id, title, metadata, project_id, scope, allowed_for_ai, created_at, updated_at, sync_status, last_synced_at
+        FROM conversations c
+        ${whereClause}
+        ORDER BY updated_at DESC
+      `)
+      .all(...params)
+      .map((row) => {
+        const context = extractConversationContext(fromJson(row.metadata), {
+          projectId: row.project_id,
+          scope: row.scope,
+          allowedForAi: row.allowed_for_ai,
+        });
+
+        return {
+          ...row,
+          metadata: context.metadata,
+          project_id: context.projectId,
+          scope: context.scope,
+          allowed_for_ai: context.allowedForAi,
+        };
+      });
   }
 
-  getSummary() {
+  updateConversationContext(conversationId, updates = {}) {
+    const existing = this.getConversation(conversationId, { includeDeleted: true });
+
+    if (!existing) {
+      throw new Error("Conversation tidak ditemukan.");
+    }
+
+    const context = extractConversationContext(existing.metadata, {
+      projectId: updates.projectId,
+      scope: updates.scope,
+      allowedForAi: updates.allowedForAi,
+    });
+
+    const updatedAt = updates.updatedAt || new Date().toISOString();
+
+    this.db
+      .prepare(`
+        UPDATE conversations
+        SET title = ?, metadata = ?, project_id = ?, scope = ?, allowed_for_ai = ?, updated_at = ?, sync_status = ?
+        WHERE id = ?
+      `)
+      .run(
+        updates.title || existing.title,
+        toJson(context.metadata),
+        context.projectId,
+        context.scope,
+        context.allowedForAi,
+        updatedAt,
+        SYNC_PENDING,
+        conversationId,
+      );
+
+    return this.getConversation(conversationId, { includeDeleted: true });
+  }
+
+  getSummary({ projectId = "" } = {}) {
     const counts = this.db
-      .prepare(
-        `
-          SELECT
-            (SELECT COUNT(*) FROM conversations WHERE deleted_at IS NULL) AS conversation_count,
-            (SELECT COUNT(*) FROM messages WHERE deleted_at IS NULL) AS message_count,
-            (SELECT COUNT(*) FROM conversations WHERE deleted_at IS NOT NULL) AS deleted_conversation_count,
-            (SELECT COUNT(*) FROM messages WHERE deleted_at IS NOT NULL) AS deleted_message_count,
-            (SELECT COUNT(*) FROM conversations WHERE sync_status = '${SYNC_PENDING}') AS pending_conversations,
-            (SELECT COUNT(*) FROM messages WHERE sync_status = '${SYNC_PENDING}') AS pending_messages,
-            (SELECT MAX(updated_at) FROM conversations) AS last_conversation_update,
-            (SELECT MAX(created_at) FROM messages WHERE deleted_at IS NULL) AS last_message_at
-        `,
-      )
-      .get();
+      .prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM conversations WHERE deleted_at IS NULL) AS conversation_count,
+          (SELECT COUNT(*) FROM messages WHERE deleted_at IS NULL) AS message_count,
+          (SELECT COUNT(*) FROM conversations WHERE deleted_at IS NOT NULL) AS deleted_conversation_count,
+          (SELECT COUNT(*) FROM messages WHERE deleted_at IS NOT NULL) AS deleted_message_count,
+          (SELECT COUNT(*) FROM conversations WHERE sync_status = '${SYNC_PENDING}') AS pending_conversations,
+          (SELECT COUNT(*) FROM messages WHERE sync_status = '${SYNC_PENDING}') AS pending_messages,
+          (SELECT COUNT(*) FROM conversations WHERE deleted_at IS NULL AND allowed_for_ai = 1) AS allowed_ai_conversation_count,
+          (SELECT COUNT(*) FROM conversations WHERE deleted_at IS NULL AND scope = 'project') AS project_scoped_conversation_count,
+          (SELECT COUNT(*) FROM conversations WHERE deleted_at IS NULL AND project_id = ?) AS active_project_conversation_count,
+          (SELECT COUNT(*) FROM conversations WHERE deleted_at IS NULL AND project_id = ? AND allowed_for_ai = 1) AS active_project_allowed_ai_count,
+          (SELECT MAX(updated_at) FROM conversations) AS last_conversation_update,
+          (SELECT MAX(created_at) FROM messages WHERE deleted_at IS NULL) AS last_message_at
+      `)
+      .get(projectId, projectId);
 
     const perSource = this.db
-      .prepare(
-        `
-          SELECT source, COUNT(*) AS count
-          FROM messages
-          WHERE deleted_at IS NULL
-          GROUP BY source
-          ORDER BY count DESC, source ASC
-        `,
-      )
+      .prepare(`
+        SELECT source, COUNT(*) AS count
+        FROM messages
+        WHERE deleted_at IS NULL
+        GROUP BY source
+        ORDER BY count DESC, source ASC
+      `)
       .all();
 
     return {
@@ -532,16 +820,15 @@ class LocalStore {
 
   getTranscript(conversationId, { includeDeleted = false } = {}) {
     const deletedClause = includeDeleted ? "" : "AND deleted_at IS NULL";
+
     return this.db
-      .prepare(
-        `
-          SELECT id, source, role, content, created_at, updated_at, metadata, deleted_at
-          FROM messages
-          WHERE conversation_id = ?
-          ${deletedClause}
-          ORDER BY created_at ASC, id ASC
-        `,
-      )
+      .prepare(`
+        SELECT id, source, role, content, created_at, updated_at, metadata, deleted_at
+        FROM messages
+        WHERE conversation_id = ?
+        ${deletedClause}
+        ORDER BY created_at ASC, id ASC
+      `)
       .all(conversationId)
       .map((row) => ({
         ...row,
@@ -558,23 +845,19 @@ class LocalStore {
       }
 
       this.db
-        .prepare(
-          `
-            UPDATE conversations
-            SET deleted_at = ?, updated_at = ?, sync_status = ?
-            WHERE id = ?
-          `,
-        )
+        .prepare(`
+          UPDATE conversations
+          SET deleted_at = ?, updated_at = ?, sync_status = ?
+          WHERE id = ?
+        `)
         .run(deletedAt, deletedAt, SYNC_PENDING, conversationId);
 
       this.db
-        .prepare(
-          `
-            UPDATE messages
-            SET deleted_at = ?, updated_at = ?, sync_status = ?
-            WHERE conversation_id = ?
-          `,
-        )
+        .prepare(`
+          UPDATE messages
+          SET deleted_at = ?, updated_at = ?, sync_status = ?
+          WHERE conversation_id = ?
+        `)
         .run(deletedAt, deletedAt, SYNC_PENDING, conversationId);
     });
 
@@ -590,23 +873,19 @@ class LocalStore {
       }
 
       this.db
-        .prepare(
-          `
-            UPDATE conversations
-            SET deleted_at = NULL, updated_at = ?, sync_status = ?
-            WHERE id = ?
-          `,
-        )
+        .prepare(`
+          UPDATE conversations
+          SET deleted_at = NULL, updated_at = ?, sync_status = ?
+          WHERE id = ?
+        `)
         .run(restoredAt, SYNC_PENDING, conversationId);
 
       this.db
-        .prepare(
-          `
-            UPDATE messages
-            SET deleted_at = NULL, updated_at = ?, sync_status = ?
-            WHERE conversation_id = ?
-          `,
-        )
+        .prepare(`
+          UPDATE messages
+          SET deleted_at = NULL, updated_at = ?, sync_status = ?
+          WHERE conversation_id = ?
+        `)
         .run(restoredAt, SYNC_PENDING, conversationId);
     });
 
