@@ -44,7 +44,7 @@ Without a guardrail, stored conversations can easily become:
 ![Command center screenshot](./docs/image.png)
 
 ### Demo GIF
-![Demo GIF](./docs/demo.gif)
+![Demo GIF](./docs/demov1.gif)
 
 ## Features
 
