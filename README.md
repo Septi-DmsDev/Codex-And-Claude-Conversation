@@ -38,7 +38,7 @@ Without a guardrail, stored conversations can easily become:
 ## Preview
 
 ### Dashboard
-![Dashboard screenshot](./docs/screenshot-dashboard.png)
+![Dashboard screenshot](./docs/screenshot-dashboard1.png)
 
 ### Command center
 ![Command center screenshot](./docs/screenshot-command-center.png)
