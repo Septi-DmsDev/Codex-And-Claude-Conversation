@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/NEXT/**)",
+      "Bash(xargs grep *)"
+    ]
+  }
+}
